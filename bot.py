@@ -7,9 +7,9 @@ from util.boost_pad_tracker import BoostPadTracker
 from util.drive import steer_toward_target
 from util.sequence import Sequence, ControlStep
 from util.vec import Vec3
+from util.orientation import Orientation
 
-
-class MyBot(BaseAgent):
+class BoostHog(BaseAgent):
 
     def __init__(self, name, team, index):
         super().__init__(name, team, index)
@@ -18,6 +18,7 @@ class MyBot(BaseAgent):
 
     def initialize_agent(self):
         # Set up information about the boost pads now that the game is active and the info is available
+        # Runs once before bot starts up
         self.boost_pad_tracker.initialize_boosts(self.get_field_info())
 
     def get_output(self, packet: GameTickPacket) -> SimpleControllerState:
@@ -41,9 +42,8 @@ class MyBot(BaseAgent):
         car_location = Vec3(my_car.physics.location)
         car_velocity = Vec3(my_car.physics.velocity)
         ball_location = Vec3(packet.game_ball.physics.location)
-
-        # By default we will chase the ball, but target_location can be changed later
-        target_location = ball_location
+        car_orientation = Orientation(my_car.physics.rotation)
+        car_direction = car_orientation.forward
 
         if car_location.dist(ball_location) > 1500:
             # We're far away from the ball, let's try to lead it a little bit
@@ -52,13 +52,14 @@ class MyBot(BaseAgent):
 
             # ball_in_future might be None if we don't have an adequate ball prediction right now, like during
             # replays, so check it to avoid errors.
+            target_location = Vec3(ball_in_future.physics.location)
             if ball_in_future is not None:
-                target_location = Vec3(ball_in_future.physics.location)
                 self.renderer.draw_line_3d(ball_location, target_location, self.renderer.cyan())
 
         # Draw some things to help understand what the bot is thinking
         self.renderer.draw_line_3d(car_location, target_location, self.renderer.white())
         self.renderer.draw_string_3d(car_location, 1, 1, f'Speed: {car_velocity.length():.1f}', self.renderer.white())
+        # self.renderer.draw_string_3d(car_location, 1, 1, f'Direction: {car_direction}', self.renderer.white())
         self.renderer.draw_rect_3d(target_location, 8, 8, True, self.renderer.cyan(), centered=True)
 
         if 750 < car_velocity.length() < 800:

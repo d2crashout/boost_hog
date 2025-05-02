@@ -19,7 +19,8 @@ def limit_to_safe_range(value: float) -> float:
     return value
 
 
-def steer_toward_target(car: PlayerInfo, target: Vec3) -> float:
-    relative = relative_location(Vec3(car.physics.location), Orientation(car.physics.rotation), target)
+def steer_toward_target(car: PlayerInfo, target) -> float:
+    target_vec = Vec3(target) if not isinstance(target, Vec3) else target
+    relative = relative_location(Vec3(car.physics.location), Orientation(car.physics.rotation), target_vec)
     angle = math.atan2(relative.y, relative.x)
     return limit_to_safe_range(angle * 5)

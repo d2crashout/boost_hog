@@ -39,11 +39,15 @@ class BoostHog(BaseAgent):
 
         # Gather some information about our car and the ball
         my_car = packet.game_cars[self.index]
+        info = self.get_field_info()
         car_location = Vec3(my_car.physics.location)
+        nearest_boost_loc = get_nearest_boost(info, packet, car_location)
         car_velocity = Vec3(my_car.physics.velocity)
         ball_location = Vec3(packet.game_ball.physics.location)
-        car_orientation = Orientation(my_car.physics.rotation)
-        car_direction = car_orientation.forward
+        corner_debug = "Time Remaining: {}\n".format(packet.game_info.game_time_remaining)
+        corner_debug += "First boost location: {}\n".format(info.boost_pads[0].location)
+        corner_debug += "Nearest boost location: {}\n".format(nearest_boost_loc)
+        target_location = ball_location
 
         if car_location.dist(ball_location) > 1500:
             # We're far away from the ball, let's try to lead it a little bit
@@ -59,7 +63,9 @@ class BoostHog(BaseAgent):
         # Draw some things to help understand what the bot is thinking
         self.renderer.draw_line_3d(car_location, target_location, self.renderer.white())
         self.renderer.draw_string_3d(car_location, 1, 1, f'Speed: {car_velocity.length():.1f}', self.renderer.white())
-        # self.renderer.draw_string_3d(car_location, 1, 1, f'Direction: {car_direction}', self.renderer.white())
+        if corner_debug:
+            corner_display_y = 900 - (corner_debug.count('\n') * 20)
+            self.renderer.draw_string_2d(10, corner_display_y, 1, 1, corner_debug, self.renderer.white())
         self.renderer.draw_rect_3d(target_location, 8, 8, True, self.renderer.cyan(), centered=True)
 
         if 750 < car_velocity.length() < 800:

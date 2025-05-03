@@ -8,6 +8,7 @@ from util.drive import steer_toward_target
 from util.sequence import Sequence, ControlStep
 from util.vec import Vec3
 from util.orientation import Orientation
+from gui import DebugGUI
 
 class BoostHog(BaseAgent):
 
@@ -22,6 +23,8 @@ class BoostHog(BaseAgent):
         self.delay = 100  # Delay after 100 ticks (can adjust as needed)
         self.has_kickoff_happened = False
         self.boosts_collected = 0
+        self.debug_gui = DebugGUI(title=f"{self.name} Debug")
+        self.last_debug_time = -1.0
 
 
     def initialize_agent(self):
@@ -53,16 +56,16 @@ class BoostHog(BaseAgent):
         car_velocity = Vec3(my_car.physics.velocity)
         ball_location = Vec3(packet.game_ball.physics.location)
         target_location = nearest_boost_loc
-        behavior_mode = "Unknown"
         boost_amount = my_car.boost
         controls = SimpleControllerState()
+        game_time = packet.game_info.game_time_remaining * -1
 
-        controls = self.action_goto(my_car, target_location, packet, controls, boost_amount, car_velocity, nearest_boost_loc, ball_location)
+        controls = self.action_goto(my_car, target_location, packet, controls, boost_amount, car_velocity, nearest_boost_loc, ball_location, game_time)
 
         if not self.has_kickoff_happened:
+            behavior_mode = "Doing kickoff"
+        elif self.has_kickoff_happened and (game_time - self.chase_ball_game_time) <= 5:
             behavior_mode = "Chasing ball"
-        elif packet.game_info.game_time_remaining > self.chase_ball_game_time - 5:
-            pass
         else:
             behavior_mode = "Getting boost"
 
@@ -70,12 +73,12 @@ class BoostHog(BaseAgent):
             self.has_kickoff_happened = False
 
         # update boosts collected
-        self.update_boosts_collected(my_car, packet)
+        self.update_boosts_collected(my_car, packet, game_time)
 
         if target_location is None:
             target_location = ball_location
 
-        corner_debug = "Time Elapsed: {}\n".format(packet.game_info.game_time_remaining * -2 + packet.game_info.game_time_remaining)
+        corner_debug = "Time Elapsed: {}\n".format(game_time)
         corner_debug += "Boosts collected: {}\n".format(self.boosts_collected)
         corner_debug += "Target location: {}\n".format(target_location)
         corner_debug += "Kickoff happened: {}\n".format(self.has_kickoff_happened)
@@ -94,10 +97,13 @@ class BoostHog(BaseAgent):
         if target_location is not None:
             self.renderer.draw_rect_3d(target_location, 8, 8, True, self.renderer.cyan(), centered=True)
 
+        if self.debug_gui.is_debug_enabled():
+            self.print_debug_info(packet, game_time)
+
 
         return controls
 
-    def action_goto(self, my_car, target_location, packet, controls, boost_amount, car_velocity, nearest_boost_loc, ball_location):
+    def action_goto(self, my_car, target_location, packet, controls, boost_amount, car_velocity, nearest_boost_loc, ball_location, game_time):
         field_center = Vec3(0, 0, 0)
 
         if target_location is None:
@@ -128,6 +134,13 @@ class BoostHog(BaseAgent):
             target_location = ball_location
             if ball_location.flat() != Vec3(0, 0,0):
                 self.has_kickoff_happened = True
+        elif self.has_kickoff_happened and (game_time - self.chase_ball_game_time) <= 5:
+            target_location = ball_location
+            if self.debug_gui.is_debug_enabled():
+                if game_time - self.last_debug_time >= 1.0:
+                    print(f"[DEBUG] Ball chase timer: {game_time - self.chase_ball_game_time}")
+                    print(f"[DEBUG] Game time: {game_time}")
+                    self.last_debug_time = game_time
         else:
             target_location = nearest_boost_loc
 
@@ -141,17 +154,24 @@ class BoostHog(BaseAgent):
 
         return controls
 
-    def update_boosts_collected(self, my_car, packet):
-        # mark when 25 boosts have been reached
+    def update_boosts_collected(self, my_car, packet, game_time):
         if my_car.boost >= 100:
             if not self.boosts_counted:
                 self.boosts_collected += 1
+                if self.debug_gui.is_debug_enabled():
+                    if game_time - self.last_debug_time >= 1.0:
+                        print(f"[DEBUG] Boost collected! Total: {self.boosts_collected}")
+                        self.last_debug_time = game_time
             self.boosts_counted = True
         else:
             self.boosts_counted = False
 
-        if self.boosts_collected > 5:
-            self.chase_ball_game_time = packet.game_info.game_time_remaining
+        if self.boosts_collected >= 6:
+            self.chase_ball_game_time = game_time
+            if self.debug_gui.is_debug_enabled():
+                if game_time - self.last_debug_time >= 1.0:
+                    print(f"[DEBUG] Ball chase timer STARTED at: {self.chase_ball_game_time}")
+                    self.last_debug_time = game_time
             self.boosts_collected = 0
 
 
@@ -179,6 +199,15 @@ class BoostHog(BaseAgent):
                         if car_location.dist(Vec3(boost.location)) < car_location.dist(Vec3(nearest_boost_loc)):
                             nearest_boost_loc = boost.location
         return nearest_boost_loc
+
+    def print_debug_info(self, packet: GameTickPacket, game_time):
+        car = packet.game_cars[self.index]
+        pos = Vec3(car.physics.location)
+        boost = car.boost
+        if game_time - self.last_debug_time >= 1.0:
+            print(f"[DEBUG] Car position: {pos}, Boost: {boost:.1f}")
+            self.last_debug_time = game_time
+        self.renderer.draw_string_3d(pos, 1, 1, f"Boost: {boost:.0f}", self.renderer.green())
 
 
 def begin_front_flip(self, packet):

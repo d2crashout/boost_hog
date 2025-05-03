@@ -1,6 +1,3 @@
-import random
-import time
-
 from rlbot.agents.base_agent import BaseAgent, SimpleControllerState
 from rlbot.messages.flat.QuickChatSelection import QuickChatSelection
 from rlbot.utils.structures.game_data_struct import GameTickPacket
@@ -16,11 +13,15 @@ class BoostHog(BaseAgent):
 
     def __init__(self, name, team, index):
         super().__init__(name, team, index)
+        self.chase_ball_game_time = 0
+        self.boosts_counted = False
         self.active_sequence: Sequence = None
         self.boost_pad_tracker = BoostPadTracker()
         self.boost: bool = False
         self.counter = 0  # Track time in ticks (or update intervals)
         self.delay = 100  # Delay after 100 ticks (can adjust as needed)
+        self.has_kickoff_happened = False
+        self.boosts_collected = 0
 
 
     def initialize_agent(self):
@@ -51,57 +52,136 @@ class BoostHog(BaseAgent):
         nearest_boost_loc = self.get_nearest_boost(info, packet, car_location)
         car_velocity = Vec3(my_car.physics.velocity)
         ball_location = Vec3(packet.game_ball.physics.location)
-        corner_debug = "Time Remaining: {}\n".format(packet.game_info.game_time_remaining)
-        corner_debug += "First boost location: {}\n".format(info.boost_pads[0].location)
-        corner_debug += "Nearest boost location: {}\n".format(nearest_boost_loc)
         target_location = nearest_boost_loc
-        corner_debug += "Target location: {}\n".format(target_location)
+        behavior_mode = "Unknown"
         boost_amount = my_car.boost
+        controls = SimpleControllerState()
 
-        if boost_amount > 20:
-            if car_location.dist(nearest_boost_loc) > 1500:
-                target_location = ball_location
+        controls = self.action_goto(my_car, target_location, packet, controls, boost_amount, car_velocity, nearest_boost_loc, ball_location)
 
-                # We're far away from the ball, let's try to lead it a little bit
-                ball_prediction = self.get_ball_prediction_struct()  # This can predict bounces, etc
-                ball_in_future = find_slice_at_time(ball_prediction, packet.game_info.seconds_elapsed + 2)
-
-                # ball_in_future might be None if we don't have an adequate ball prediction right now, like during
-                # replays, so check it to avoid errors.
-                target_location = Vec3(ball_in_future.physics.location)
-                if ball_in_future is not None:
-                    self.renderer.draw_line_3d(ball_location, target_location, self.renderer.cyan())
-            target_location = nearest_boost_loc
+        if not self.has_kickoff_happened:
+            behavior_mode = "Chasing ball"
+        elif packet.game_info.game_time_remaining > self.chase_ball_game_time - 5:
+            pass
         else:
-            target_location = nearest_boost_loc
+            behavior_mode = "Getting boost"
+
+        if packet.game_info.is_kickoff_pause:
+            self.has_kickoff_happened = False
+
+        # update boosts collected
+        self.update_boosts_collected(my_car, packet)
+
+        if target_location is None:
+            target_location = ball_location
+
+        corner_debug = "Time Elapsed: {}\n".format(packet.game_info.game_time_remaining * -2 + packet.game_info.game_time_remaining)
+        corner_debug += "Boosts collected: {}\n".format(self.boosts_collected)
+        corner_debug += "Target location: {}\n".format(target_location)
+        corner_debug += "Kickoff happened: {}\n".format(self.has_kickoff_happened)
+        corner_debug += "Ball location: {}\n".format(ball_location.flat())
+        corner_debug += "Behavior mode {}\n".format(behavior_mode)
 
         # Draw some things to help understand what the bot is thinking
-        self.renderer.draw_line_3d(car_location, target_location, self.renderer.white())
-        self.renderer.draw_line_3d(car_location, nearest_boost_loc, self.renderer.yellow())
+        self.renderer.draw_line_3d(car_location, ball_location, self.renderer.white())
+        if nearest_boost_loc is not None:
+            self.renderer.draw_line_3d(car_location, nearest_boost_loc, self.renderer.yellow())
+            self.renderer.draw_rect_3d(nearest_boost_loc, 8, 8, True, self.renderer.white(), centered=True)
         self.renderer.draw_string_3d(car_location, 1, 1, f'Speed: {car_velocity.length():.1f}', self.renderer.white())
         if corner_debug:
             corner_display_y = 900 - (corner_debug.count('\n') * 20)
             self.renderer.draw_string_2d(10, corner_display_y, 1, 1, corner_debug, self.renderer.white())
-        self.renderer.draw_rect_3d(target_location, 8, 8, True, self.renderer.cyan(), centered=True)
-        self.renderer.draw_rect_3d(nearest_boost_loc, 8, 8, True, self.renderer.white(), centered=True)
+        if target_location is not None:
+            self.renderer.draw_rect_3d(target_location, 8, 8, True, self.renderer.cyan(), centered=True)
 
-        if 750 < car_velocity.length() < 800:
-            # We'll do a front flip if the car is moving at a certain speed.
-            return self.begin_front_flip(packet)
-
-        controls = SimpleControllerState()
-        controls.steer = steer_toward_target(my_car, target_location)
-        controls.throttle = 1.0
-        self.counter += 1
-        if boost_amount > 20:
-            controls.boost = True
-        else:
-            controls.boost = False
-        # You can set more controls if you want, like controls.boost.
 
         return controls
 
-    def begin_front_flip(self, packet):
+    def action_goto(self, my_car, target_location, packet, controls, boost_amount, car_velocity, nearest_boost_loc, ball_location):
+        field_center = Vec3(0, 0, 0)
+
+        if target_location is None:
+            controls.steer = steer_toward_target(my_car, field_center)
+            controls.throttle = 1.0
+            self.counter += 1
+            controls.boost = boost_amount > 20
+            return controls
+
+        # if boost_amount > 20:
+            # if car_location.dist(target_location) > 1500:
+                # We're far away from the ball, try to lead it a little
+                # ball_prediction = self.get_ball_prediction_struct()
+                # ball_in_future = find_slice_at_time(ball_prediction, packet.game_info.seconds_elapsed + 2)
+
+                # if ball_in_future is not None:
+                    # target_location = Vec3(ball_in_future.physics.location)
+                    # self.renderer.draw_line_3d(ball_location, target_location, self.renderer.cyan())
+                # else:
+                    # target_location = ball_location
+            # else:
+                # target_location = nearest_boost_loc  # Optional: could be skipped
+
+        if 750 < car_velocity.length() < 800:
+            return begin_front_flip(self, packet)
+
+        if not self.has_kickoff_happened:
+            target_location = ball_location
+            if ball_location.flat() != Vec3(0, 0,0):
+                self.has_kickoff_happened = True
+        else:
+            target_location = nearest_boost_loc
+
+        # if self.boosts_collected >= 25:
+            # target_location = ball_location
+
+        controls.steer = steer_toward_target(my_car, target_location)
+        controls.throttle = 1.0
+
+        controls.boost = boost_amount > 20
+
+        return controls
+
+    def update_boosts_collected(self, my_car, packet):
+        # mark when 25 boosts have been reached
+        if my_car.boost >= 100:
+            if not self.boosts_counted:
+                self.boosts_collected += 1
+            self.boosts_counted = True
+        else:
+            self.boosts_counted = False
+
+        if self.boosts_collected > 5:
+            self.chase_ball_game_time = packet.game_info.game_time_remaining
+            self.boosts_collected = 0
+
+
+    def get_nearest_boost(self, info, packet, car_location):
+        nearest_boost_loc = None
+
+        # loop over all boosts
+        for i, boost in enumerate(info.boost_pads):
+            # only want large boosts that haven't been taken
+            if boost.is_full_boost and packet.game_boosts[i].is_active:
+                if not nearest_boost_loc:
+                    nearest_boost_loc = boost.location
+                else:
+                    # if this boost is closer, save that
+                    if car_location.dist(Vec3(boost.location)) < car_location.dist(Vec3(nearest_boost_loc)):
+                        nearest_boost_loc = boost.location
+        if nearest_boost_loc is None:
+            for i, boost in enumerate(info.boost_pads):
+                # only want large boosts that haven't been taken
+                if packet.game_boosts[i].is_active:
+                    if not nearest_boost_loc:
+                        nearest_boost_loc = boost.location
+                    else:
+                        # if this boost is closer, save that
+                        if car_location.dist(Vec3(boost.location)) < car_location.dist(Vec3(nearest_boost_loc)):
+                            nearest_boost_loc = boost.location
+        return nearest_boost_loc
+
+
+def begin_front_flip(self, packet):
         # Send some quickchat just for fun
         self.send_quick_chat(team_only=False, quick_chat=QuickChatSelection.Information_IGotIt)
 
@@ -116,21 +196,4 @@ class BoostHog(BaseAgent):
 
         # Return the controls associated with the beginning of the sequence so we can start right away.
         return self.active_sequence.tick(packet)
-
-    def get_nearest_boost(self, info, packet, car_location):
-        nearest_boost_loc = None
-
-        # loop over all boosts
-        for i, boost in enumerate(info.boost_pads):
-            # only want large boosts that haven't been taken
-            if boost.is_full_boost and packet.game_boosts[i].is_active:
-
-                if not nearest_boost_loc:
-                    nearest_boost_loc = boost.location
-                else:
-                    # if this boost is closer, save that
-                    if car_location.dist(Vec3(boost.location)) < car_location.dist(Vec3(nearest_boost_loc)):
-                        nearest_boost_loc = boost.location
-
-        return nearest_boost_loc
 

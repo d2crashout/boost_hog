@@ -46,6 +46,12 @@ class Vec3:
     def __getitem__(self, item: int):
         return (self.x, self.y, self.z)[item]
 
+    def __eq__(self, other: 'Vec3'):
+        return self.x == other.x and self.y == other.y and self.z == other.z
+
+    def __ne__(self, other: 'Vec3'):
+        return not self.__eq__(other)
+
     def __add__(self, other: 'Vec3') -> 'Vec3':
         return Vec3(self.x + other.x, self.y + other.y, self.z + other.z)
 
